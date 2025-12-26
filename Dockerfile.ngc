@@ -1,0 +1,86 @@
+# Translator Service - Using NVIDIA NGC PyTorch Container for ARM64
+# This uses NVIDIA's pre-built PyTorch with CUDA support for ARM64
+#
+# Build: docker build -f Dockerfile.ngc -t inference/translator:local .
+# Run:   docker run --gpus all -p 7104:7104 inference/translator:local
+
+# Use NVIDIA's PyTorch container which has ARM64 + CUDA support
+FROM nvcr.io/nvidia/pytorch:25.09-py3
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies for fairseq2
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsndfile1-dev \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install fairseq2 build dependencies
+RUN pip install --no-cache-dir \
+    cmake \
+    ninja \
+    packaging
+
+# Clone and build fairseq2 v0.2.0 from source (required by seamless_communication)
+WORKDIR /opt
+RUN git clone --recurse-submodules --branch v0.2.0 --depth 1 https://github.com/facebookresearch/fairseq2.git
+
+# Build fairseq2n (native code) - CPU only to avoid CUDA ABI issues
+# The Blackwell GPU (sm_121) is not supported by fairseq2 v0.2.0's CUDA code anyway
+WORKDIR /opt/fairseq2/fairseq2n
+RUN cmake -GNinja -DFAIRSEQ2N_USE_CUDA=OFF -B build && \
+    cmake --build build
+
+# Install fairseq2n (native Python bindings)
+WORKDIR /opt/fairseq2/fairseq2n/python
+RUN pip install -e . --no-build-isolation
+
+# Install fairseq2 (Python package)
+WORKDIR /opt/fairseq2
+RUN pip install -e . --no-build-isolation
+
+# Install seamless_communication from main (compatible with latest fairseq2)
+RUN pip install --no-deps "seamless_communication @ git+https://github.com/facebookresearch/seamless_communication.git"
+
+# Install sonar-space v0.2.1 (compatible with fairseq2 v0.2.x)
+RUN pip install --no-deps sonar-space==0.2.1
+
+# Build torchaudio from source (NGC PyTorch is ABI-incompatible with PyPI wheels)
+RUN pip install --no-cache-dir --no-deps --no-build-isolation "git+https://github.com/pytorch/audio@release/2.9"
+RUN pip install --no-cache-dir \
+    datasets==2.18.0 \
+    fire \
+    librosa \
+    scipy \
+    soundfile \
+    simuleval~=1.1.3 \
+    openai-whisper \
+    sox
+
+# Copy backend code
+WORKDIR /app
+COPY backend/ /app/backend/
+
+# Install backend dependencies
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    pydantic \
+    loguru \
+    python-dotenv \
+    pydub
+
+# Environment defaults
+ENV API_HOST=0.0.0.0
+ENV API_PORT=8104
+ENV PYTHONPATH=/app/backend
+
+EXPOSE 8104
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8104/health')" || exit 1
+
+# Override NGC entrypoint to bypass GPU compatibility check
+ENTRYPOINT []
+CMD ["python", "-m", "uvicorn", "seamless_api.main:app", "--host", "0.0.0.0", "--port", "8104"]

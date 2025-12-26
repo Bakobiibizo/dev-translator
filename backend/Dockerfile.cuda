@@ -1,0 +1,56 @@
+# SeamlessM4T Translation API - CUDA Version
+# Use PyTorch CUDA base image
+
+FROM pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Install uv for fast dependency management
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# Copy project files
+COPY pyproject.toml .
+COPY seamless_api/ seamless_api/
+
+# Create virtual environment and install dependencies
+RUN uv venv /app/.venv
+ENV PATH="/app/.venv/bin:$PATH"
+ENV VIRTUAL_ENV="/app/.venv"
+
+# Install torchaudio matching the base image PyTorch version
+RUN uv pip install torchaudio==2.1.0 --index-url https://download.pytorch.org/whl/cu121
+
+# Install seamless_communication and other dependencies
+RUN uv pip install .
+
+# Create model cache directory
+RUN mkdir -p /app/models
+ENV MODEL_CACHE_DIR=/app/models
+ENV HF_HOME=/app/models
+
+# Default environment
+ENV HOST=0.0.0.0
+ENV PORT=8000
+ENV DEVICE=cuda
+ENV TORCH_DTYPE=float16
+ENV MODEL_NAME=seamlessM4T_v2_large
+ENV VOCODER_NAME=vocoder_v2
+
+# Expose port
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=30s --start-period=300s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+
+# Run the service
+CMD ["python", "-m", "seamless_api.main"]

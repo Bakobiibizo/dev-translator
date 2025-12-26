@@ -1,0 +1,59 @@
+services:
+  seamless-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    image: hydra-dynamix/seamless-api:latest
+    container_name: seamless-api
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEVICE=${DEVICE:-cuda}
+      - TORCH_DTYPE=${TORCH_DTYPE:-float16}
+      - MODEL_NAME=${MODEL_NAME:-seamlessM4T_v2_large}
+      - VOCODER_NAME=${VOCODER_NAME:-vocoder_v2}
+    volumes:
+      # Persist model cache (fairseq2 downloads here)
+      - seamless-models:/root/.cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 300s
+
+  # CPU-only version (no GPU required)
+  seamless-api-cpu:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: hydra-dynamix/seamless-api:cpu
+    container_name: seamless-api-cpu
+    ports:
+      - "${PORT:-8001}:8000"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEVICE=cpu
+      - TORCH_DTYPE=float32
+      - MODEL_NAME=${MODEL_NAME:-seamlessM4T_v2_large}
+      - VOCODER_NAME=${VOCODER_NAME:-vocoder_v2}
+    volumes:
+      - seamless-models:/root/.cache
+    restart: unless-stopped
+    profiles:
+      - cpu
+
+volumes:
+  seamless-models:
+    name: seamless-models
