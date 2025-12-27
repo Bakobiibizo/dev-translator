@@ -16,6 +16,13 @@ RUN pip install --no-cache-dir uv
 RUN pip uninstall -y pynvml || true \
 && pip install --no-cache-dir nvidia-ml-py
 
+ENV PATH="/root/.cargo/bin:/usr/local/cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --default-toolchain stable --profile minimal --no-modify-path \
+    && /root/.cargo/bin/rustup default stable \
+    && chown -R ${UID}:${GID} /usr/local/rustup /usr/local/cargo /root/.cargo \
+    && /root/.cargo/bin/cargo --version
+
 RUN pip install --no-cache-dir --no-deps --upgrade setuptools wheel \
 && pip install --no-cache-dir --no-deps --no-build-isolation "git+https://github.com/pytorch/audio@release/2.9" \
 && python -c "import torchvision; print(torchvision.__version__)" || pip install --no-cache-dir --no-deps --no-build-isolation "git+https://github.com/pytorch/vision@release/2.9" \
